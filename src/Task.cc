@@ -455,9 +455,11 @@ void Task::unmap_buffers_for(
     AutoRemoteSyscalls& remote, Task* other,
     remote_ptr<struct syscallbuf_hdr> saved_syscallbuf_child) {
   if (other->scratch_ptr) {
+    // Unmap one more page at the end of scratch_ptr, which is a guard page
     if (remote.infallible_munmap_syscall_if_alive(
-          other->scratch_ptr, other->scratch_size)) {
+          other->scratch_ptr, other->scratch_size + page_size())) {
       vm()->unmap(this, other->scratch_ptr, other->scratch_size);
+      vm()->unmap(this, other->scratch_ptr + other->scratch_size, page_size());
     }
   }
   if (!saved_syscallbuf_child.is_null()) {

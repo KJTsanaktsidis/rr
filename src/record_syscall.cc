@@ -3343,7 +3343,8 @@ static const uintptr_t FIXED_SCRATCH_PTR = 0x68000000;
 static void init_scratch_memory(RecordTask* t,
                                 ScratchAddrType addr_type = DYNAMIC_ADDRESS) {
   const int scratch_size = 512 * page_size();
-  size_t sz = scratch_size;
+  // Allocate one more page off the end of the scratch as a guard page
+  size_t sz = scratch_size + page_size();
   // The PROT_EXEC looks scary, and it is, but it's to prevent
   // this region from being coalesced with another anonymous
   // segment mapped just after this one.  If we named this
@@ -3363,6 +3364,10 @@ static void init_scratch_memory(RecordTask* t,
                                                   sz, prot, flags | MAP_FIXED, -1, 0);
     }
     t->scratch_size = scratch_size;
+
+    // mprotect the extra page we allocated as a guard page
+    remote.infallible_syscall_if_alive(syscall_number_for_mprotect(remote.arch()),
+                                       t->scratch_ptr + t->scratch_size, page_size(), PROT_NONE);
   }
 
   t->setup_preload_thread_locals();
@@ -3373,11 +3378,20 @@ static void init_scratch_memory(RecordTask* t,
   r.set_syscall_result(t->scratch_ptr);
   t->set_regs(r);
 
-  KernelMapping km =
-      t->vm()->map(t, t->scratch_ptr, sz, prot, flags, 0, string());
   struct stat stat;
   memset(&stat, 0, sizeof(stat));
+
+  // Important that the guard page goes first into the recording; lots of things (e.g.
+  // prepare_clone and process_execve) depend on this order
+  KernelMapping km_guard =
+      t->vm()->map(t, t->scratch_ptr + t->scratch_size, page_size(), PROT_NONE, flags, 0, string());
   auto record_in_trace = t->trace_writer().write_mapped_region(t,
+    km_guard, stat, km_guard.fsname(), vector<TraceRemoteFd>());
+  ASSERT(t, record_in_trace == TraceWriter::DONT_RECORD_IN_TRACE);
+
+  KernelMapping km =
+      t->vm()->map(t, t->scratch_ptr, t->scratch_size, prot, flags, 0, string());
+  record_in_trace = t->trace_writer().write_mapped_region(t,
     km, stat, km.fsname(), vector<TraceRemoteFd>());
   ASSERT(t, record_in_trace == TraceWriter::DONT_RECORD_IN_TRACE);
 

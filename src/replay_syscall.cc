@@ -312,6 +312,13 @@ template <typename Arch> static void prepare_clone(ReplayTask* t) {
 
   TraceReader::MappedData data;
   KernelMapping km = t->trace_reader().read_mapped_region(&data);
+  // Skip past guard page
+  if (km.prot() == 0) {
+    bool found;
+    km = t->trace_reader().read_mapped_region(&data, &found);
+    ASSERT(t, found) << "Could not find scratch memory mapping after clone";
+  }
+
   init_scratch_memory(new_task, km, data);
 }
 
